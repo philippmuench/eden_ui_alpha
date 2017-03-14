@@ -1,6 +1,6 @@
 # import functions
 library(shiny)
-library(sendmailR)
+#library(sendmailR)
 library(shinyjs)
 library(tools)
 library(ggplot2)
@@ -46,7 +46,6 @@ Sys.chmod(fasta.path, mode = "0777", use_umask = TRUE)
 Sys.chmod(ffn.path, mode = "0777", use_umask = TRUE)
 Sys.chmod(faa.path, mode = "0777", use_umask = TRUE)
 
-
 system2("echo", paste('";;server ready" >> ', log.path, sep = ""))
 
 # define header
@@ -64,31 +63,25 @@ shinyUI(fluidPage(
       8,
       
       #     wellPanel(
+  
       tabsetPanel(
         tabPanel("File upload",
                  wellPanel(uiOutput("upload_ui_head"))
                  ,
-                 value = "start"),
-        
+                 value = "tab1"),
+     
         tabPanel("File grouping",
                  wellPanel(uiOutput("upload_ui_mid")),
-                 value = "start"),
+                 value = "tab2"),
         
         tabPanel("Gene family definition",
                  wellPanel(uiOutput("upload_ui_hmm")),
-                 value = "start"),
+                 value = "tab3"),
         
         tabPanel("Parameters",
                  wellPanel(uiOutput("upload_ui_bottom")),
-                 value = "start"),
+                 value = "tab4"),
         
-        #
-        # tabPanel(
-        #   "start",
-        #   ,
-        #   value = "start"
-        # ),
-        #
         
         id = "tsp"
       )
@@ -98,6 +91,7 @@ shinyUI(fluidPage(
     column(
       4,
       htmlOutput("statusrunning"),
+      #tableOutput("uploaded"),
       htmlOutput("statusfinished"),
       htmlOutput("statuscheck"),
       tableOutput("log"),
@@ -105,7 +99,18 @@ shinyUI(fluidPage(
       # textOutput("text2"),
       uiOutput("upload_ui_buttons")
       
-    )
+    ),
     
-  )
+    fluidRow(useShinyjs(),
+    
+    # show uploaded files
+    column(10,
+      sidebarPanel(
+    # htmlOutput("upload_response"),
+     htmlOutput("grouping_response"),
+     tableOutput("fasta_uploaded"), 
+     tableOutput("faa_uploaded"),
+     tableOutput("ffn_uploaded"))
+    )
+    ))
 ))

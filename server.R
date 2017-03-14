@@ -6,6 +6,30 @@ options(shiny.deprecation.messages = FALSE)
 options(shiny.sanitize.errors = FALSE)
 
 shinyServer(function(input, output, session) {
+fileInput3 <- function (inputId, label, multiple = FALSE, accept = NULL, width = NULL) 
+  {
+    restoredValue <- restoreInput(id = inputId, default = NULL)
+    if (!is.null(restoredValue) && !is.data.frame(restoredValue)) {
+      warning("Restored value for ", inputId, " has incorrect format.")
+      restoredValue <- NULL
+    }
+    if (!is.null(restoredValue)) {
+      restoredValue <- toJSON(restoredValue, strict_atomic = FALSE)
+    }
+    inputTag <- tags$input(id = inputId, name = inputId, type = "file", 
+                           style = "display: none;", `data-restore` = restoredValue)
+    if (multiple) 
+      inputTag$attribs$multiple <- "multiple"
+    if (length(accept) > 0) 
+      inputTag$attribs$accept <- paste(accept, collapse = ",")
+    div(class = "form-group shiny-input-container", style = if (!is.null(width)) 
+      paste0("width: ", validateCssUnit(width), ";"),   tags$label(label), div(class = "input-group", tags$label(class = "input-group-btn", 
+                                                                 span(class = "btn btn-default btn-file", "Browse...", 
+                                                                      inputTag)))
+    )
+  }
+  
+  
   # ==============================================================================================
   # initialize status
   # ==============================================================================================
@@ -21,7 +45,12 @@ shinyServer(function(input, output, session) {
   status$faa <- FALSE
   status$ffn <- FALSE
   status$fasta <- FALSE
+  status$num_fasta <- 0
+  status$num_faa <- 0
+  status$num_ffn <- 0
   status$files <- NULL
+  status$groupnum <- 1
+  status$showstart <- FALSE
   # ==============================================================================================
   # check procedure for the detection which files are provided by the user
   # ==============================================================================================
@@ -87,52 +116,207 @@ shinyServer(function(input, output, session) {
   # user interface
   # ==============================================================================================
   
+  output$upload_ui_head_a <- renderUI({
+    if(input$intype == 'orf'){
+      if(!status$fasta){
+      conditionalPanel(
+        condition = "input.tsp=='tab1'",
+        fluidRow(
+          column(
+            5,
+            fileInput3(
+              'files_faa',
+              'upload .faa files',
+              accept = c('.faa'),
+              multiple = TRUE
+            )
+          ), column(
+            5,
+            fileInput3(
+              'files_ffn',
+              'upload .ffn files',
+              accept = c('.ffn'),
+              multiple = TRUE
+            )
+          )),
+        
+        fluidRow(
+          column(
+            5,
+            htmlOutput("upload_response_faa")
+          ), column(
+            5,
+            htmlOutput("upload_response_ffn")
+          ))
+        
+        
+        )
+      } else {
+        conditionalPanel(
+          condition = "input.tsp=='tab1'",
+          helpText("You already have fasta files uploaded. Please click 'reset files' to delete them first."))
+      }
+      
+      
+    } else {
+      if(!status$faa & !status$ffn  ){
+      conditionalPanel(
+        condition = "input.tsp=='tab1'",
+        
+            fileInput3(
+              'files_fasta',
+              'upload .fasta files',
+              accept = c('.fasta'),
+              multiple = TRUE,
+              width = '100%'),
+            htmlOutput("upload_response")
+        
+
+
+      )
+      } else {
+        conditionalPanel(
+          condition = "input.tsp=='tab1'",
+          helpText("You already have ORF files uploaded. Please click 'reset files' to delete them first."))
+        
+        
+      }
+      
+      
+    }
+    })
+  
   
   ### ui head part
   output$upload_ui_head <- renderUI({
     conditionalPanel(
-      condition = "input.tsp=='start'",
+      condition = "input.tsp=='tab1'",
       helpText(
-        "Step 1: specify input file format. You can either upload .faa and .ffn files of open reading frames (ORF) or the nucleotide .fasta file (in this case the ORFs will be predicted inside the pipeline)."
+        "Specify input file format. You can either upload .faa and .ffn files of open reading frames (ORF) or the nucleotide .fasta file (in this case the ORFs will be predicted inside the pipeline)."
       ),
+      radioButtons("intype", "Input type:",
+                   c("ORF" = "orf",
+                     "FASTA" = "fasta")), 
+      uiOutput("upload_ui_head_a")
       
-      fluidRow(column(
-        5,
-        fileInput(
-          'files_faa',
-          'upload .faa files',
-          accept = c('.faa'),
-          multiple = TRUE
-        )
-      ), column(
-        5,
-        fileInput(
-          'files_ffn',
-          'upload .ffn files',
-          accept = c('.ffn'),
-          multiple = TRUE
-        )
-      )),
-      actionButton('upload_orf', label = "upload ORF"),
-      hr(),
-      helpText("OR you can provide .fasta files"),
-      
-      fileInput(
-        'files_fasta',
-        'select one or multiple fasta files',
-        accept = c('.fasta'),
-        multiple = TRUE
-      ),
-      actionButton('upload_fasta', label = "upload fasta")
     )
   })
   
-  ### ui mid part
+  output$fasta_uploaded <- renderTable({
+    if (is.null(input$files_fasta))
+      return(NULL)
+    else {
+      infiles_fasta1 <- as.data.frame(input$files_fasta)
+      
+    infiles_fasta1$dest <-
+      paste(fasta.path, infiles_fasta1$name, sep = "/")
+    for (i in 1:nrow(infiles_fasta1)) {
+      cmd <-
+        paste("mv ",
+              infiles_fasta1$datapath[i],
+              " ",
+              infiles_fasta1$dest[i],
+              sep = "")
+      err <- system(cmd,  intern = TRUE)
+    }
+    out <- paste(err)
+    system2("echo", paste('";;fasta files added" >> ', log.path, sep = ""))
+    status$fasta <- TRUE
+    status$files <- list.files(path =  fasta.path,
+                               full.names = FALSE,
+                               recursive = FALSE)
+    status$num_fasta <- length(status$files)
+    
+    }
+    return(NULL)
+  })
+  
+  output$faa_uploaded <- renderTable({
+    if (is.null(input$files_faa))
+      return(NULL)
+    else {
+      infiles_faa <- as.data.frame(input$files_faa)
+      
+      infiles_faa$dest <-
+        paste(faa.path, infiles_faa$name, sep = "/")
+      for (i in 1:nrow(infiles_faa)) {
+        cmd <-
+          paste("mv ",
+                infiles_faa$datapath[i],
+                " ",
+                infiles_faa$dest[i],
+                sep = "")
+        err <- system(cmd,  intern = TRUE)
+      }
+      out <- paste(err)
+      system2("echo", paste('";;faa files added" >> ', log.path, sep = ""))
+      status$faa <- TRUE
+      status$files <- list.files(path =  faa.path,
+                                 full.names = FALSE,
+                                 recursive = FALSE)
+      status$faa_files <- list.files(path =  faa.path,
+                                 full.names = FALSE,
+                                 recursive = FALSE)
+      
+      status$num_faa <- length(status$faa_files)
+      if(length(status$ffn_files) > 0){
+        #compare faa and ffn names
+        cat('compare')
+      }
+    }
+    
+    
+    
+  })
+  
+  output$ffn_uploaded <- renderTable({
+    if (is.null(input$files_ffn))
+      return(NULL)
+    else {
+      infiles_ffn <- as.data.frame(input$files_ffn)
+      
+      infiles_ffn$dest <-
+        paste(ffn.path, infiles_ffn$name, sep = "/")
+      for (i in 1:nrow(infiles_ffn)) {
+        cmd <-
+          paste("mv ",
+                infiles_ffn$datapath[i],
+                " ",
+                infiles_ffn$dest[i],
+                sep = "")
+        err <- system(cmd,  intern = TRUE)
+      }
+      out <- paste(err)
+      system2("echo", paste('";;ffn files added" >> ', log.path, sep = ""))
+      status$ffn <- TRUE
+      status$files <- list.files(path =  ffn.path,
+                                 full.names = FALSE,
+                                 recursive = FALSE)
+      status$ffn_files <- list.files(path =  ffn.path,
+                                 full.names = FALSE,
+                                 recursive = FALSE)
+      status$num_ffn <- length(status$ffn_files)
+      if(length(status$faa_files) > 0){
+        #compare faa and ffn names
+        cat('compare')
+      }
+      
+    }
+    
+  })
+  
+  
+  
+  
+  
+  
+  
+    ### ui mid part
   output$upload_ui_mid <- renderUI({
     conditionalPanel(
-      condition = "input.tsp=='start'",
+      condition = "input.tsp=='tab2'",
       helpText(
-        "Step 2: specify file handling: If you want to perform a comparative analysis you have to specify which samples are get pooled together. On default all samples will be pooled together."
+        "Specify file handling: If you want to perform a comparative analysis you have to specify which samples are get pooled together. On default all samples will be pooled together."
       ),
       uiOutput('uploadsamplestxt')
     )
@@ -140,8 +324,8 @@ shinyServer(function(input, output, session) {
   
   output$upload_ui_bottom <- renderUI({
     conditionalPanel(
-      condition = "input.tsp=='start'",
-      helpText("Step 3: Specify name and thresholds"),
+      condition = "input.tsp=='tab4'",
+      helpText("Specify name and thresholds"),
       textInput("eden_run_name", label = "give your analysis a unique name", value = "eden_run_1"),
       #  textInput("eden_run_cpus", label = "number of CPUs used for analysis", value = "4"),
       numericInput("eden_run_cpus", label = "number of CPUs", value = 4),
@@ -160,9 +344,9 @@ shinyServer(function(input, output, session) {
   
   output$upload_ui_hmm <- renderUI({
     conditionalPanel(
-      condition = "input.tsp=='start'",
+      condition = "input.tsp=='tab3'",
       helpText(
-        "Step 4: select group definition. You can select precalculated hidden markov models (HMM) or upload a .HMM file which may contain multiple hmm models for the gene families of interest."
+        "Select group definition. You can select precalculated hidden markov models (HMM) or upload a .HMM file which may contain multiple hmm models for the gene families of interest."
       ),
       
       radioButtons(
@@ -194,19 +378,41 @@ shinyServer(function(input, output, session) {
     )
   })
   
-  
   # show upload section for samples.txt
   output$uploadsamplestxt <- renderUI({
     conditionalPanel(
-      condition = "input.tsp=='start'",
+      condition = "input.tsp=='tab2'",
+      
+      radioButtons("grouptype", "select kind of analysis",
+                   c("pooling" = "pooling",
+                     "comparative analysis" = "comparative")),
+     uiOutput('uploadsamplestxt_a')
+    )
+  })
+  
+  # show upload section for samples.txt
+  output$uploadsamplestxt_a <- renderUI({
+  if (input$grouptype == 'comparative'){
+    conditionalPanel(
+      condition = "input.tsp=='tab2'",
       helpText("Please define which samples are pooled together:"),
       numericInput("groupnum", label = "number of groups", value = 2),
       uiOutput("groupboxes"),
       uiOutput("updategroups")
     )
+    
+  }
+else {
+  conditionalPanel(
+    condition = "input.tsp=='tab2'"
+  )
+  
+}    
+    
   })
   
-  output$groupboxes <- renderUI({
+  
+    output$groupboxes <- renderUI({
     members <<- as.integer(input$groupnum) # default 2
     max_pred <- as.integer(20)
     # faa mode
@@ -245,6 +451,10 @@ shinyServer(function(input, output, session) {
   
   # delete files on button press
   observeEvent(input$deletefiles, {
+  # reset number of uploaded files to zero
+    status$num_fasta <- 0
+    status$num_faa <- 0
+    status$num_ffn <- 0
     isolate({
       unlink(faa.path, recursive = T, force = T)
       unlink(ffn.path, recursive = T, force = T)
@@ -288,6 +498,8 @@ shinyServer(function(input, output, session) {
       input <-
         reactiveValues() # save the run status as a reactive object
       
+      
+      
       #
       # input <- NULL
       # js$reset()
@@ -295,69 +507,65 @@ shinyServer(function(input, output, session) {
   })
   
   
-  # faa upload
-  observeEvent(input$upload_orf, {
-    print("upload_faa using observedEvent")
-    infiles_faa <- as.data.frame(input$files_faa)
-    infiles_faa$dest <-
-      paste(faa.path, infiles_faa$name, sep = "/")
-    for (i in 1:nrow(infiles_faa)) {
-      cmd <-
-        paste("mv ", infiles_faa$datapath[i], " ", infiles_faa$dest[i], sep = "")
-      err <- system(cmd,  intern = TRUE)
-    }
-    system2("echo", paste('";;faa files added" >> ', log.path, sep = ""))
-    status$faa <- TRUE
-    
-    # process ffn
-    infiles_ffn <- as.data.frame(input$files_ffn)
-    infiles_ffn$dest <-
-      paste(ffn.path, infiles_ffn$name, sep = "/")
-    for (i in 1:nrow(infiles_ffn)) {
-      cmd <-
-        paste("mv ", infiles_ffn$datapath[i], " ", infiles_ffn$dest[i], sep = "")
-      err <- system(cmd,  intern = TRUE)
-    }
-    system2("echo", paste('";;ffn files added" >> ', log.path, sep = ""))
-    status$ffn <- TRUE
-    
-    # update files
-    status$files <- list.files(path =  faa.path,
-                               full.names = FALSE,
-                               recursive = FALSE)
-    
-    
-    
-  })
+  # # faa upload
+  # observeEvent(input$upload_orf, {
+  #   print("upload_faa using observedEvent")
+  #   infiles_faa <- as.data.frame(input$files_faa)
+  #   infiles_faa$dest <-
+  #     paste(faa.path, infiles_faa$name, sep = "/")
+  #   for (i in 1:nrow(infiles_faa)) {
+  #     cmd <-
+  #       paste("mv ", infiles_faa$datapath[i], " ", infiles_faa$dest[i], sep = "")
+  #     err <- system(cmd,  intern = TRUE)
+  #   }
+  #   system2("echo", paste('";;faa files added" >> ', log.path, sep = ""))
+  #   status$faa <- TRUE
+  #   
+  # #  hide(id = "start1", anim = TRUE)
+  #   
+  #   # process ffn
+  #   infiles_ffn <- as.data.frame(input$files_ffn)
+  #   infiles_ffn$dest <-
+  #     paste(ffn.path, infiles_ffn$name, sep = "/")
+  #   for (i in 1:nrow(infiles_ffn)) {
+  #     cmd <-
+  #       paste("mv ", infiles_ffn$datapath[i], " ", infiles_ffn$dest[i], sep = "")
+  #     err <- system(cmd,  intern = TRUE)
+  #   }
+  #   system2("echo", paste('";;ffn files added" >> ', log.path, sep = ""))
+  #   status$ffn <- TRUE
+  #   
+  #   # update files
+  #   status$files <- list.files(path =  faa.path,
+  #                              full.names = FALSE,
+  #                              recursive = FALSE)
+  # 
+  # })
   
   # fasta upload
-  observeEvent(input$upload_fasta, {
-    print("upload_fasta using observedEvent")
-    
-    infiles_fasta <- as.data.frame(input$files_fasta)
-    infiles_fasta$dest <-
-      paste(fasta.path, infiles_fasta$name, sep = "/")
-    for (i in 1:nrow(infiles_fasta)) {
-      cmd <-
-        paste("mv ",
-              infiles_fasta$datapath[i],
-              " ",
-              infiles_fasta$dest[i],
-              sep = "")
-      err <- system(cmd,  intern = TRUE)
-    }
-    out <- paste(err)
-    system2("echo", paste('";;fasta files added" >> ', log.path, sep = ""))
-    status$fasta <- TRUE
-    
-    status$files <- list.files(path =  fasta.path,
-                               full.names = FALSE,
-                               recursive = FALSE)
-    
-    
-  })
-  
-  
+  # observeEvent(input$upload_fasta, {
+  #   print("upload_fasta using observedEvent")
+  #   
+  #   infiles_fasta <- as.data.frame(input$files_fasta)
+  #   infiles_fasta$dest <-
+  #     paste(fasta.path, infiles_fasta$name, sep = "/")
+  #   for (i in 1:nrow(infiles_fasta)) {
+  #     cmd <-
+  #       paste("mv ",
+  #             infiles_fasta$datapath[i],
+  #             " ",
+  #             infiles_fasta$dest[i],
+  #             sep = "")
+  #     err <- system(cmd,  intern = TRUE)
+  #   }
+  #   out <- paste(err)
+  #   system2("echo", paste('";;fasta files added" >> ', log.path, sep = ""))
+  #   status$fasta <- TRUE
+  #   status$files <- list.files(path =  fasta.path,
+  #                              full.names = FALSE,
+  #                              recursive = FALSE)
+  # 
+  # })
   
   # hmm upload
   observeEvent(input$upload_hmm, {
@@ -401,6 +609,7 @@ shinyServer(function(input, output, session) {
       sep = ";"
     )
     status$samples_provided <- TRUE
+    status$groupnum <- members
     system2("echo",
             paste('";;grouping file updated" >> ', log.path, sep = ""))
     
@@ -422,7 +631,6 @@ shinyServer(function(input, output, session) {
       return(NULL)
     }
   }
-  
   
   get_finished_status <- function() {
     if (isolate(status$eden_finished)) {
@@ -519,6 +727,7 @@ shinyServer(function(input, output, session) {
   output$log = renderText({
     invalidateLater(millis = 1000, session)
     update_log()
+
   })
   
   output$text1 <-  renderText({
@@ -565,4 +774,50 @@ shinyServer(function(input, output, session) {
       reactiveValues() # save the run status as a reactive object
     #    js$reset()
   })
+  
+  ### new
+  output$upload_response = renderText({
+  input$deletefiles
+
+      msg <- paste("<span class='badge'>", status$num_fasta,"</span> fasta files uploaded", sep="")
+  
+    msg
+  })
+  
+  ### new
+  output$upload_response_faa = renderText({
+    input$deletefiles
+      msg <- paste("<span class='badge'>", status$num_faa,"</span> faa files uploaded", sep="")
+
+    msg
+  })
+  
+  ### new
+  output$upload_response_ffn = renderText({
+    input$deletefiles
+      msg <- paste("<span class='badge'>", status$num_ffn,"</span> ffn files uploaded", sep="")
+    msg
+  })
+  
+    output$grouping_response = renderText({
+    if(length(status$files)!=0){
+      
+        msg <- paste("<span class='badge'>",status$groupnum  ,"</span> grouping", sep='') 
+        
+ 
+    } else {
+  msg <- ""
+    }
+    msg
+  })
+  
+  
+  
+    observe({
+    toggle(condition = status$files, selector = "#tsp li a[data-value=tab2]")
+    toggle(condition = status$files, selector = "#tsp li a[data-value=tab3]")
+    toggle(condition = status$files, selector = "#tsp li a[data-value=tab4]")
+    
+   # toggle(condition = status$showstart, checkButton)
+    })
 })
